@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8" />
+    <title>AIA - Tutor de Voz</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f5f7;
+            padding: 24px;
+        }
+        #aia-user {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: #222;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #444;
+        }
+        button {
+            font-size: 16px;
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            background: #0056ff;
+            color: white;
+        }
+        button:hover {
+            background: #0044cc;
+        }
+
+        /* ===== CONSOLE VISUAL ===== */
+        #console {
+            margin-top: 20px;
+            width: 100%;
+            height: 250px;
+            background: #111;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 6px;
+            overflow-y: scroll;
+            font-size: 13px;
+            font-family: "Consolas", monospace;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="aia-user">Carregando...</div>
+
+<h2>AIA - Tutor de Voz</h2>
+<p>Fale e o AIA responderá usando voz com interrupção inteligente.</p>
+
+<button id="startBtn">Iniciar Conversa</button>
+
+<div id="status">Status: parado</div>
+
+<!-- === CONSOLE VISUAL === -->
+<div id="console"></div>
+
+<script>
+
+// ===========================================================
+//  LOG VISUAL
+// ===========================================================
+function log(msg) {
+    const consoleBox = document.getElementById("console");
+    const ts = new Date().toLocaleTimeString();
+    consoleBox.innerText += `[${ts}] ${msg}\n`;
+    consoleBox.scrollTop = consoleBox.scrollHeight;
+    console.log(msg);
+}
+
+
+
+// ===========================================================
+// 1. TOKEN DO LOGIN
+// ===========================================================
+
+const AIA_TOKEN = localStorage.getItem("AIA_TOKEN");
+const AIA_USER_NAME = localStorage.getItem("AIA_USER_NAME") || "Aluno";
+
+if (!AIA_TOKEN) {
+    log("Sem token → redirecionando para login.html");
+    window.location.href = "login.html";
+}
+
+document.getElementById("aia-user").innerText = `Bem-vindo, ${AIA_USER_NAME}`;
+
+
+
+// ===========================================================
+// 2. VARIÁVEIS GLOBAIS
+// ===========================================================
+
+let ws = null;
+let mediaRecorder = null;
+let audioContext = null;
+
+
+
+// ===========================================================
+// 3. CONECTAR AO WEBSOCKET DO AIA
+// ===========================================================
+
+function connectAIAWebSocket() {
+    const url = `ws://localhost:8000/ws?token=${AIA_TOKEN}`;
+    log("Conectando ao WebSocket: " + url);
+    return new WebSocket(url);
+}
+
+
+
+// ===========================================================
+// 4. BOTÃO INICIAR
+// ===========================================================
+
+document.getElementById("startBtn").onclick = async function () {
+
+    log("Iniciando conversa…");
+    document.getElementById("status").innerText = "Status: conectando...";
+
+    ws = connectAIAWebSocket();
+
+    ws.onopen = async () => {
+        log("WS conectado com sucesso.");
+        document.getElementById("status").innerText = "Status: conectado";
+
+        audioContext = new AudioContext();
+
+        await startMicStreaming();
+    };
+
+    ws.onerror = (e) => log("ERRO WS: " + JSON.stringify(e));
+    ws.onclose = () => {
+        log("WS fechado.");
+        document.getElementById("status").innerText = "Status: desconectado";
+    };
+
+    ws.onmessage = async (event) => {
+        if (event.data instanceof Blob) {
+            log("Recebido áudio do AIA (" + event.data.size + " bytes)");
+            playAudio(event.data);
+            return;
+        }
+
+        // =======================================================
+        // JSON vindo do backend
+        // =======================================================
+        let msg = {};
+        try { msg = JSON.parse(event.data); }
+        catch { log("JSON inválido: " + event.data); return; }
+
+        if (msg.type === "transcript_delta")
+            log("Transcrição parcial: " + msg.text);
+
+        if (msg.type === "response_done")
+            log("Resposta concluída pelo tutor.");
+    };
+};
+
+
+
+// ===========================================================
+// 5. MICROFONE COM MEDIARECORDER (WEBM/OPUS)
+// ===========================================================
+
+async function startMicStreaming() {
+    try {
+        log("Ativando microfone…");
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // FORMATO CORRETO PARA A OPENAI
+        mediaRecorder = new MediaRecorder(stream, {
+            mimeType: "audio/webm; codecs=opus"
+        });
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                log("Enviando chunk (" + event.data.size + " bytes)");
+                ws.send(event.data);
+            }
+        };
+
+        mediaRecorder.start(250); // envia áudio em intervalos
+        document.getElementById("status").innerText = "Status: microfone ativo";
+        log("MediaRecorder iniciado (WEBM/OPUS).");
+
+    } catch (err) {
+        log("ERRO ao iniciar microfone: " + err);
+        alert("Erro no microfone: " + err);
+    }
+}
+
+
+
+// ===========================================================
+// 6. REPRODUÇÃO DE ÁUDIO RECEBIDO DO BACKEND
+// ===========================================================
+
+function playAudio(blob) {
+    const audio = new Audio(URL.createObjectURL(blob));
+    audio.play().catch(e => log("Erro ao tocar áudio: " + e));
+    log("Reproduzindo áudio...");
+}
+
+</script>
+
+</body>
+</html>

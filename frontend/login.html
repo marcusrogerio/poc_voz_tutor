@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>AIA - Login</title>
+
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+    <style>
+        body {
+            background: #f3f3f3;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 80px;
+        }
+
+        .card {
+            background: white;
+            width: 380px;
+            margin: auto;
+            padding: 32px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        h2 {
+            margin-bottom: 16px;
+            color: #444;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Entrar no AIA</h2>
+        <div id="g_id_onload"
+             data-client_id="383086281798-l2mb67vu2juut355u484fms8nlf0lhq3.apps.googleusercontent.com"
+             data-callback="handleCredentialResponse"
+             data-auto_prompt="false">
+        </div>
+
+        <div class="g_id_signin"
+             data-type="standard"
+             data-size="large"
+             data-theme="outline"
+             data-text="sign_in_with"
+             data-shape="rectangular"
+             data-logo_alignment="left">
+        </div>
+    </div>
+
+
+<script>
+async function handleCredentialResponse(response) {
+
+    console.log("Google credential recebida.", response);
+
+    const credential = response.credential;
+
+    // ========================
+    // CHAMA O BACKEND
+    // ========================
+    let backendResponse;
+    try {
+        backendResponse = await fetch("http://localhost:8000/auth/google", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ credential })
+        });
+    } catch (err) {
+        console.error("Erro ao chamar backend:", err);
+        alert("Não foi possível conectar ao servidor AIA.");
+        return;
+    }
+
+    console.log("Status da resposta:", backendResponse.status);
+
+    // Lê texto bruto ANTES de tentar decodificar JSON
+    const rawText = await backendResponse.text();
+    console.log("Texto bruto recebido:", rawText);
+
+    let data;
+    try {
+        data = JSON.parse(rawText);
+    } catch (err) {
+        console.error("Erro ao interpretar JSON do backend:", err);
+        alert("Erro inesperado ao interpretar resposta do servidor.");
+        return;
+    }
+
+    console.log("JSON interpretado:", data);
+
+    if (!data || !data.token) {
+        alert("Erro: o servidor não retornou token válido.");
+        return;
+    }
+
+    // ========================
+    // SALVA NO LOCALSTORAGE
+    // ========================
+    localStorage.setItem("AIA_TOKEN", data.token);
+    localStorage.setItem("AIA_USER_NAME", data.name || "Aluno");
+    localStorage.setItem("AIA_USER_EMAIL", data.email || "");
+
+    // ========================
+    // REDIRECIONA PARA INDEX
+    // ========================
+    console.log("Login bem-sucedido. Redirecionando para index.html...");
+    window.location.href = "index.html";
+}
+</script>
+
+</body>
+</html>

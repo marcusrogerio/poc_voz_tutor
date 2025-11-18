@@ -1,0 +1,26 @@
+fastapi==0.121.2
+uvicorn[standard]==0.38.0
+python-dotenv==1.0.1
+websockets==12.0
+
+# Banco de dados / Supabase / pgvector
+SQLAlchemy==2.0.29
+psycopg[binary]==3.1.18
+asyncpg >= 0.29
+pgvector==0.2.4
+
+# Autenticação Google
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+
+# Requests (OBRIGATÓRIO para Google Auth)
+requests==2.31.0
+
+# JWT interno do AIA
+PyJWT==2.8.0
+
+# (Opcional)
+python-dateutil==2.9.0
+
+# MÓDULO ESSENCIAL DO AIA
+openai>=1.51.0
