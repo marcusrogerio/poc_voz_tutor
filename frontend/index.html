@@ -2,217 +2,229 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8" />
-    <title>AIA - Tutor de Voz</title>
-
+    <title>AIA - Tutor de Voz (Barge-in Real)</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', sans-serif;
             background: #f4f5f7;
-            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
         }
-        #aia-user {
-            font-size: 20px;
-            font-weight: bold;
-            margin-bottom: 12px;
-            color: #222;
-        }
-        #status {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #444;
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
         }
         button {
-            font-size: 16px;
-            padding: 10px 20px;
-            border-radius: 6px;
+            font-size: 18px;
+            padding: 14px 32px;
+            border-radius: 50px;
             border: none;
             cursor: pointer;
             background: #0056ff;
             color: white;
+            margin-top: 20px;
         }
-        button:hover {
-            background: #0044cc;
-        }
-
-        /* ===== CONSOLE VISUAL ===== */
+        button:hover { background: #0044cc; }
         #console {
             margin-top: 20px;
-            width: 100%;
             height: 250px;
-            background: #111;
+            background: #1e1e1e;
             color: #0f0;
             padding: 10px;
-            border-radius: 6px;
+            border-radius: 8px;
             overflow-y: scroll;
-            font-size: 13px;
-            font-family: "Consolas", monospace;
-            white-space: pre-wrap;
+            text-align: left;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .status-dot {
+            height: 10px; width: 10px; 
+            background-color: #bbb; 
+            border-radius: 50%; 
+            display: inline-block;
         }
     </style>
 </head>
-
 <body>
 
-<div id="aia-user">Carregando...</div>
-
-<h2>AIA - Tutor de Voz</h2>
-<p>Fale e o AIA responderá usando voz com interrupção inteligente.</p>
-
-<button id="startBtn">Iniciar Conversa</button>
-
-<div id="status">Status: parado</div>
-
-<!-- === CONSOLE VISUAL === -->
-<div id="console"></div>
+<div class="container">
+    <h2>AIA - Tutor de Voz</h2>
+    <p>Fale para interromper. O sistema limpará a fila de áudio instantaneamente.</p>
+    
+    <div id="status-text">Status: Parado</div>
+    <button id="startBtn">📞 Iniciar Conversa</button>
+    <div id="console"></div>
+</div>
 
 <script>
-
-// ===========================================================
-//  LOG VISUAL
-// ===========================================================
-function log(msg) {
-    const consoleBox = document.getElementById("console");
-    const ts = new Date().toLocaleTimeString();
-    consoleBox.innerText += `[${ts}] ${msg}\n`;
-    consoleBox.scrollTop = consoleBox.scrollHeight;
-    console.log(msg);
-}
-
-
-
-// ===========================================================
-// 1. TOKEN DO LOGIN
-// ===========================================================
-
+// ==========================================
+// 1. CONFIGURAÇÃO E VARIÁVEIS
+// ==========================================
 const AIA_TOKEN = localStorage.getItem("AIA_TOKEN");
-const AIA_USER_NAME = localStorage.getItem("AIA_USER_NAME") || "Aluno";
-
-if (!AIA_TOKEN) {
-    log("Sem token → redirecionando para login.html");
-    window.location.href = "login.html";
-}
-
-document.getElementById("aia-user").innerText = `Bem-vindo, ${AIA_USER_NAME}`;
-
-
-
-// ===========================================================
-// 2. VARIÁVEIS GLOBAIS
-// ===========================================================
+if (!AIA_TOKEN) window.location.href = "login.html";
 
 let ws = null;
-let mediaRecorder = null;
 let audioContext = null;
+let processor = null;
+let input = null;
+let isRecording = false;
 
+// --- GERENCIADOR DE FILA DE ÁUDIO ---
+let nextStartTime = 0; 
+let scheduledSources = []; // Lista de todos os pedacinhos na fila
 
-
-// ===========================================================
-// 3. CONECTAR AO WEBSOCKET DO AIA
-// ===========================================================
-
-function connectAIAWebSocket() {
-    const url = `ws://localhost:8000/ws?token=${AIA_TOKEN}`;
-    log("Conectando ao WebSocket: " + url);
-    return new WebSocket(url);
+function log(msg) {
+    const box = document.getElementById("console");
+    const ts = new Date().toLocaleTimeString();
+    box.innerHTML += `<div><span style="color:#666">[${ts}]</span> ${msg}</div>`;
+    box.scrollTop = box.scrollHeight;
 }
 
+// ==========================================
+// 2. CONTROLE PRINCIPAL
+// ==========================================
+const btn = document.getElementById("startBtn");
 
-
-// ===========================================================
-// 4. BOTÃO INICIAR
-// ===========================================================
-
-document.getElementById("startBtn").onclick = async function () {
-
-    log("Iniciando conversa…");
-    document.getElementById("status").innerText = "Status: conectando...";
-
-    ws = connectAIAWebSocket();
-
-    ws.onopen = async () => {
-        log("WS conectado com sucesso.");
-        document.getElementById("status").innerText = "Status: conectado";
-
-        audioContext = new AudioContext();
-
-        await startMicStreaming();
-    };
-
-    ws.onerror = (e) => log("ERRO WS: " + JSON.stringify(e));
-    ws.onclose = () => {
-        log("WS fechado.");
-        document.getElementById("status").innerText = "Status: desconectado";
-    };
-
-    ws.onmessage = async (event) => {
-        if (event.data instanceof Blob) {
-            log("Recebido áudio do AIA (" + event.data.size + " bytes)");
-            playAudio(event.data);
-            return;
-        }
-
-        // =======================================================
-        // JSON vindo do backend
-        // =======================================================
-        let msg = {};
-        try { msg = JSON.parse(event.data); }
-        catch { log("JSON inválido: " + event.data); return; }
-
-        if (msg.type === "transcript_delta")
-            log("Transcrição parcial: " + msg.text);
-
-        if (msg.type === "response_done")
-            log("Resposta concluída pelo tutor.");
-    };
+btn.onclick = async () => {
+    if (!isRecording) await startConversation();
+    else stopConversation();
 };
 
+async function startConversation() {
+    document.getElementById("status-text").innerText = "Conectando...";
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    
+    ws = new WebSocket(`ws://localhost:8000/ws?token=${AIA_TOKEN}`);
+    ws.binaryType = "arraybuffer";
 
+    ws.onopen = () => {
+        log("✅ Conectado.");
+        btn.innerText = "🟥 Parar";
+        btn.style.background = "#dc3545";
+        startMicPCM();
+        isRecording = true;
+    };
 
-// ===========================================================
-// 5. MICROFONE COM MEDIARECORDER (WEBM/OPUS)
-// ===========================================================
+    ws.onmessage = (event) => {
+        // A. ÁUDIO (PCM)
+        if (event.data instanceof ArrayBuffer) {
+            playPCM16(event.data);
+        } 
+        // B. COMANDOS (JSON)
+        else {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === "interrupt") {
+                    log("🛑 Interrupção! Limpando áudio...");
+                    clearAudioQueue(); // <--- A MÁGICA ACONTECE AQUI
+                } else if (msg.type === "transcript") {
+                    log("📝 " + msg.text);
+                }
+            } catch(e) {}
+        }
+    };
 
-async function startMicStreaming() {
-    try {
-        log("Ativando microfone…");
+    ws.onclose = () => stopConversation();
+}
 
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+function stopConversation() {
+    clearAudioQueue();
+    if (processor) { processor.disconnect(); processor = null; }
+    if (input) { input.disconnect(); input = null; }
+    if (ws) { ws.close(); ws = null; }
+    if (audioContext) { audioContext.close(); audioContext = null; }
+    
+    isRecording = false;
+    btn.innerText = "📞 Iniciar Conversa";
+    btn.style.background = "#0056ff";
+    document.getElementById("status-text").innerText = "Status: Parado";
+}
 
-        // FORMATO CORRETO PARA A OPENAI
-        mediaRecorder = new MediaRecorder(stream, {
-            mimeType: "audio/webm; codecs=opus"
-        });
+// ==========================================
+// 3. GERENCIAMENTO DE ÁUDIO (CORREÇÃO DE OVERLAP)
+// ==========================================
 
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                log("Enviando chunk (" + event.data.size + " bytes)");
-                ws.send(event.data);
-            }
-        };
-
-        mediaRecorder.start(250); // envia áudio em intervalos
-        document.getElementById("status").innerText = "Status: microfone ativo";
-        log("MediaRecorder iniciado (WEBM/OPUS).");
-
-    } catch (err) {
-        log("ERRO ao iniciar microfone: " + err);
-        alert("Erro no microfone: " + err);
+function clearAudioQueue() {
+    // 1. Para CADA pedacinho que estava agendado
+    scheduledSources.forEach(source => {
+        try { source.stop(); } catch(e) {}
+    });
+    // 2. Limpa a lista
+    scheduledSources = [];
+    
+    // 3. Reseta o relógio para AGORA (para o novo áudio não sair com delay)
+    if (audioContext) {
+        nextStartTime = audioContext.currentTime; 
     }
 }
 
+function playPCM16(arrayBuffer) {
+    if (!audioContext) return;
 
+    // Conversão Int16 -> Float32
+    const dataView = new DataView(arrayBuffer);
+    const float32 = new Float32Array(arrayBuffer.byteLength / 2);
+    for (let i = 0; i < float32.length; i++) {
+        const int16 = dataView.getInt16(i * 2, true);
+        float32[i] = int16 / 32768.0;
+    }
 
-// ===========================================================
-// 6. REPRODUÇÃO DE ÁUDIO RECEBIDO DO BACKEND
-// ===========================================================
+    const buffer = audioContext.createBuffer(1, float32.length, 24000);
+    buffer.getChannelData(0).set(float32);
 
-function playAudio(blob) {
-    const audio = new Audio(URL.createObjectURL(blob));
-    audio.play().catch(e => log("Erro ao tocar áudio: " + e));
-    log("Reproduzindo áudio...");
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+
+    // Sincronia
+    const currentTime = audioContext.currentTime;
+    if (nextStartTime < currentTime) nextStartTime = currentTime;
+    
+    source.start(nextStartTime);
+    nextStartTime += buffer.duration;
+
+    // ADICIONA À LISTA DE CONTROLE
+    scheduledSources.push(source);
+
+    // REMOVE DA LISTA QUANDO TERMINAR SOZINHO
+    source.onended = () => {
+        scheduledSources = scheduledSources.filter(s => s !== source);
+    };
 }
 
-</script>
+// ==========================================
+// 4. MICROFONE (PCM 24kHz)
+// ==========================================
+async function startMicPCM() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, sampleRate: 24000 } 
+        });
+        input = audioContext.createMediaStreamSource(stream);
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
 
+        processor.onaudioprocess = (e) => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            const buffer = new ArrayBuffer(inputData.length * 2);
+            const view = new DataView(buffer);
+            for (let i = 0; i < inputData.length; i++) {
+                let s = Math.max(-1, Math.min(1, inputData[i]));
+                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            ws.send(buffer);
+        };
+        input.connect(processor);
+        processor.connect(audioContext.destination);
+    } catch (e) { alert("Erro Mic: " + e); }
+}
+</script>
 </body>
 </html>
